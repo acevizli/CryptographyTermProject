@@ -34,6 +34,8 @@ serverSPKx = data["serverSPKx"]
 
 serverSPKy = data["serverSPKy"]
 
+K_HMAC = data["K_HMAC"]
+
 curve = Curve.get_curve("secp256k1")
 n = curve.order
 p = curve.field
@@ -159,20 +161,46 @@ def verifyMessage(message, s, h):
     return hprime == h
 
 
+
+def sign0TK(zeroTKpublic):
+    message = zeroTKpublic.x.to_bytes((zeroTKpublic.x.bit_length() + 7) // 8, byteorder="big") + zeroTKpublic.y.to_bytes((zeroTKpublic.y.bit_length() + 7) // 8, byteorder="big")
+    hmac =  HMAC.new(key=K_HMAC.to_bytes((K_HMAC.bit_length() +7)//8, byteorder="big"),msg=message,digestmod=SHA256)
+    return hmac.hexdigest()
+def generate0TK(index):
+    zeroTK = random.randint(1,n-1)
+    zeroTKpublic = zeroTK * P
+    signature = sign0TK(zeroTKpublic)
+    OTKReg(index,zeroTKpublic.x,zeroTKpublic.y,signature)
+    data['0TK{}'.format(index)] = zeroTK
+    with open("data.json", "w") as json_file:
+        json.dump(data, json_file)
+
+
+
 if len(sys.argv) < 2:
     print("usage: py .\phase1 <arg>")
     sys.exit(1)
 
 arg = sys.argv[1]
-if arg == "IKreg":
+if arg == "registerIK":
+    Sa = random.randint(1,n-1)
+    data['Sa'] = Sa
+    with open("data.json", "w") as json_file:
+        json.dump(data, json_file)
+    Q = Sa * P
     h, s = signMessage(stuID)
     IKRegReq(h, s, Q.x, Q.y)
 
-elif arg == "IKverify":
+elif arg == "verifyIK":
     code = int(sys.argv[2])
     IKRegVerify(code)
 
-elif arg == "SPKreg":
+elif arg == "registerSPK":
+    Sp = random.randint(1,n-1)
+    data['Sp'] = Sp
+    with open("data.json", "w") as json_file:
+        json.dump(data, json_file)
+    SPKpublic = Sp * P
     xBytes = SPKpublic.x.to_bytes((SPKpublic.x.bit_length() + 7) // 8, byteorder="big")
     yBytes = SPKpublic.y.to_bytes((SPKpublic.y.bit_length() + 7) // 8, byteorder="big")
     h, s = signMessage(xBytes + yBytes)
@@ -190,6 +218,22 @@ elif arg == "SPKreg":
             json.dump(data, json_file)
     else:
         print("Server SPK could not be verified")
-
+elif arg == "resetSPK":
+    h,s = signMessage(stuID)
+    ResetSPK(h,s)
+elif arg == "genHMAC":
+    ServerSPK = Point(data["serverSPKx"], data["serverSPKy"],curve)
+    T = Sp * ServerSPK
+    U =   T.x.to_bytes((T.x.bit_length() + 7) // 8, byteorder="big") + T.y.to_bytes((T.y.bit_length() + 7) // 8, byteorder="big") + b'NoNeedToRideAndHide'
+    K_HMAC = int.from_bytes(SHA3_256.new(U).digest(), byteorder="big")
+    data['K_HMAC'] = K_HMAC
+    with open("data.json", "w") as json_file:
+        json.dump(data, json_file)
+elif arg == "gen0TK":
+    for i in range(10):
+        generate0TK(i)
+elif arg == "reset0TK":
+    h,s = signMessage(stuID)
+    ResetOTK(h, s)
 else:
     print("usage: py .\phase1 <arg>")
