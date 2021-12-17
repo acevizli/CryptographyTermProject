@@ -178,11 +178,14 @@ def generate0TK(index):
 
 
 if len(sys.argv) < 2:
-    print("usage: py .\phase1 <arg>")
+    print("usage: py .\phase1 <arg>\nargument: -h|--help       display help")
     sys.exit(1)
 
 arg = sys.argv[1]
-if arg == "registerIK":
+if arg == "-h" or arg == "--help":
+    with open("readme.txt", "r") as f:
+        print(f.read())
+elif arg == "registerIK":
     Sa = random.randint(1,n-1)
     data['Sa'] = Sa
     with open("data.json", "w") as json_file:
