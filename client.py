@@ -8,7 +8,7 @@ import sys
 from ecpy.curves import Curve, Point
 from Crypto.Hash import SHA3_256, HMAC, SHA256
 import requests
-from Crypto.Cipher import AES
+from Crypto.Cipher import AES,Counter
 from Crypto import Random
 from Crypto.Util.Padding import pad
 from Crypto.Util.Padding import unpad
@@ -176,6 +176,70 @@ def generate0TK(index):
         json.dump(data, json_file)
 
 
+#Pseudo-client will send you 5 messages to your inbox via server when you call this function
+def PseudoSendMsg(h,s):
+    mes = {'ID':stuID, 'H': h, 'S': s}
+    print("Sending message is: ", mes)
+    response = requests.put('{}/{}'.format(API_URL, "PseudoSendMsg"), json = mes)		
+    print(response.json())
+
+#get your messages. server will send 1 message from your inbox 
+def ReqMsg(h,s):
+    mes = {'ID':stuID, 'H': h, 'S': s}
+    print("Sending message is: ", mes)
+    response = requests.get('{}/{}'.format(API_URL, "ReqMsg"), json = mes)	
+    print(response.json())	
+    if((response.ok) == True): 
+        res = response.json()
+        return res["IDB"], res["OTKID"], res["MSGID"], res["MSG"], res["EK.X"], res["EK.Y"]
+
+#If you decrypted the message, send back the plaintext for grading
+def Checker(stuID, stuIDB, msgID, decmsg):
+    mes = {'IDA':stuID, 'IDB':stuIDB, 'MSGID': msgID, 'DECMSG': decmsg}
+    print("Sending message is: ", mes)
+    response = requests.put('{}/{}'.format(API_URL, "Checker"), json = mes)		
+    print(response.json())
+
+
+def to_int(byte):
+    return int.from_bytes(byte, byteorder="big")
+
+def KDF_chain(KDF):
+    KENC=SHA3_256.new(KDF.to_bytes((KDF.bit_length() + 7) // 8, byteorder="big") + b'LeaveMeAlone').digest()
+    KHMAC=SHA3_256.new(KENC + b'GlovesAndSteeringWheel').digest()
+    KDF_NEXT=SHA3_256.new(KHMAC + b'YouWillNotHaveTheDrink').digest()
+    return to_int(KENC),to_int(KHMAC),to_int(KDF_NEXT)
+
+
+
+def Decrypt():
+    h,s=signMessage(stuID)
+    PseudoSendMsg(h,s)
+    stuIDB, otkID,  msgID,  msg , EKx ,EKy =ReqMsg(h,s)
+    #Generation of Ks
+    EKPoint=Point(EKx,EKy,curve)#EKB.Pub
+    T=data["0TK"+otkID]*EKPoint
+    U=T.x.to_bytes((T.x.bit_length() + 7) // 8, byteorder="big") + T.y.to_bytes((T.y.bit_length() + 7) // 8, byteorder="big") + b'MadMadWorld'
+    Ks=int.from_bytes(SHA3_256.new(U).digest(), byteorder="big")
+    #KDF
+    kenc,khmac,kdf=KDF_chain(Ks)
+    hmacvalue = HMAC.new(key=khmac.to_bytes((khmac.bit_length() +7)//8, byteorder="big"),msg=msg[1:-32],digestmod=SHA256)
+    if(hmacvalue.digest() != msg[-32:]):
+        Checker(stuID,stuIDB,msgID,"INVALIDHMAC")
+    else:
+        counter_obj = Counter.new(
+            128,
+            initial_value=int.from_bytes(dec_material.iv, byteorder='big'),
+            little_endian=False)
+        aes = AES.new(kenc, AES.MODE_CTR, counter=counter_obj.new(128))
+
+        # Encrypt and return IV and ciphertext.
+        ciphertext = aes.encrypt(me)
+
+
+
+
+
 
 if len(sys.argv) < 2:
     print("usage: py .\phase1 <arg>\nargument: -h|--help       display help")
@@ -240,3 +304,5 @@ elif arg == "reset0TK":
     ResetOTK(h, s)
 else:
     print("usage: py .\phase1 <arg>")
+
+
