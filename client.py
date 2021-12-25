@@ -8,7 +8,7 @@ import sys
 from ecpy.curves import Curve, Point
 from Crypto.Hash import SHA3_256, HMAC, SHA256
 import requests
-from Crypto.Cipher import AES,Counter
+from Crypto.Cipher import AES
 from Crypto import Random
 from Crypto.Util.Padding import pad
 from Crypto.Util.Padding import unpad
@@ -161,84 +161,111 @@ def verifyMessage(message, s, h):
     return hprime == h
 
 
-
 def sign0TK(zeroTKpublic):
-    message = zeroTKpublic.x.to_bytes((zeroTKpublic.x.bit_length() + 7) // 8, byteorder="big") + zeroTKpublic.y.to_bytes((zeroTKpublic.y.bit_length() + 7) // 8, byteorder="big")
-    hmac =  HMAC.new(key=K_HMAC.to_bytes((K_HMAC.bit_length() +7)//8, byteorder="big"),msg=message,digestmod=SHA256)
+    message = zeroTKpublic.x.to_bytes(
+        (zeroTKpublic.x.bit_length() + 7) // 8, byteorder="big"
+    ) + zeroTKpublic.y.to_bytes((zeroTKpublic.y.bit_length() + 7) // 8, byteorder="big")
+    hmac = HMAC.new(
+        key=K_HMAC.to_bytes((K_HMAC.bit_length() + 7) // 8, byteorder="big"),
+        msg=message,
+        digestmod=SHA256,
+    )
     return hmac.hexdigest()
+
+
 def generate0TK(index):
-    zeroTK = random.randint(1,n-1)
+    zeroTK = random.randint(1, n - 1)
     zeroTKpublic = zeroTK * P
     signature = sign0TK(zeroTKpublic)
-    OTKReg(index,zeroTKpublic.x,zeroTKpublic.y,signature)
-    data['0TK{}'.format(index)] = zeroTK
+    OTKReg(index, zeroTKpublic.x, zeroTKpublic.y, signature)
+    data["0TK{}".format(index)] = zeroTK
     with open("data.json", "w") as json_file:
         json.dump(data, json_file)
 
 
-#Pseudo-client will send you 5 messages to your inbox via server when you call this function
-def PseudoSendMsg(h,s):
-    mes = {'ID':stuID, 'H': h, 'S': s}
+# Pseudo-client will send you 5 messages to your inbox via server when you call this function
+def PseudoSendMsg(h, s):
+    mes = {"ID": stuID, "H": h, "S": s}
     print("Sending message is: ", mes)
-    response = requests.put('{}/{}'.format(API_URL, "PseudoSendMsg"), json = mes)		
+    response = requests.put("{}/{}".format(API_URL, "PseudoSendMsg"), json=mes)
     print(response.json())
 
-#get your messages. server will send 1 message from your inbox 
-def ReqMsg(h,s):
-    mes = {'ID':stuID, 'H': h, 'S': s}
+
+# get your messages. server will send 1 message from your inbox
+def ReqMsg(h, s):
+    mes = {"ID": stuID, "H": h, "S": s}
     print("Sending message is: ", mes)
-    response = requests.get('{}/{}'.format(API_URL, "ReqMsg"), json = mes)	
-    print(response.json())	
-    if((response.ok) == True): 
+    response = requests.get("{}/{}".format(API_URL, "ReqMsg"), json=mes)
+    print(response.json())
+    if (response.ok) == True:
         res = response.json()
-        return res["IDB"], res["OTKID"], res["MSGID"], res["MSG"], res["EK.X"], res["EK.Y"]
+        return (
+            res["IDB"],
+            res["OTKID"],
+            res["MSGID"],
+            res["MSG"],
+            res["EK.X"],
+            res["EK.Y"],
+        )
 
-#If you decrypted the message, send back the plaintext for grading
+
+# If you decrypted the message, send back the plaintext for grading
 def Checker(stuID, stuIDB, msgID, decmsg):
-    mes = {'IDA':stuID, 'IDB':stuIDB, 'MSGID': msgID, 'DECMSG': decmsg}
+    mes = {"IDA": stuID, "IDB": stuIDB, "MSGID": msgID, "DECMSG": decmsg}
     print("Sending message is: ", mes)
-    response = requests.put('{}/{}'.format(API_URL, "Checker"), json = mes)		
+    response = requests.put("{}/{}".format(API_URL, "Checker"), json=mes)
     print(response.json())
 
 
-def to_int(byte):
+def byteToInt(byte):
     return int.from_bytes(byte, byteorder="big")
 
+
+def intToByte(integer):
+    return integer.to_bytes((integer.bit_length() + 7) // 8, byteorder="big")
+
+
 def KDF_chain(KDF):
-    KENC=SHA3_256.new(KDF.to_bytes((KDF.bit_length() + 7) // 8, byteorder="big") + b'LeaveMeAlone').digest()
-    KHMAC=SHA3_256.new(KENC + b'GlovesAndSteeringWheel').digest()
-    KDF_NEXT=SHA3_256.new(KHMAC + b'YouWillNotHaveTheDrink').digest()
-    return to_int(KENC),to_int(KHMAC),to_int(KDF_NEXT)
+    KENC = SHA3_256.new(KDF + b"LeaveMeAlone").digest()
+    KHMAC = SHA3_256.new(KENC + b"GlovesAndSteeringWheel").digest()
+    KDF_NEXT = SHA3_256.new(KHMAC + b"YouWillNotHaveTheDrink").digest()
+    return KENC, KHMAC, KDF_NEXT
 
 
+def DecryptPseudoMessages():
+    h, s = signMessage(stuID)
+    PseudoSendMsg(h, s)
+    stuIDB, otkID, msgID, msg, EKx, EKy = ReqMsg(h, s)
+    # Generation of Ks
+    EKPoint = Point(EKx, EKy, curve)  # EKB.Pub
+    T = data["0TK" + str(otkID)] * EKPoint
+    U = intToByte(T.x) + intToByte(T.y) + b"MadMadWorld"
+    Ks = SHA3_256.new(U).digest()
+    kdf = Ks
+    kenc, khmac, kdf = KDF_chain(kdf)
+    DecryptMessage(kenc, khmac, msg, stuIDB, msgID)
+    for i in range(4):
+        stuIDB, otkID, msgID, msg, EKx, EKy = ReqMsg(h, s)
+        kenc, khmac, kdf = KDF_chain(kdf)
+        DecryptMessage(kenc, khmac, msg, stuIDB, msgID)
 
-def Decrypt():
-    h,s=signMessage(stuID)
-    PseudoSendMsg(h,s)
-    stuIDB, otkID,  msgID,  msg , EKx ,EKy =ReqMsg(h,s)
-    #Generation of Ks
-    EKPoint=Point(EKx,EKy,curve)#EKB.Pub
-    T=data["0TK"+otkID]*EKPoint
-    U=T.x.to_bytes((T.x.bit_length() + 7) // 8, byteorder="big") + T.y.to_bytes((T.y.bit_length() + 7) // 8, byteorder="big") + b'MadMadWorld'
-    Ks=int.from_bytes(SHA3_256.new(U).digest(), byteorder="big")
-    #KDF
-    kenc,khmac,kdf=KDF_chain(Ks)
-    hmacvalue = HMAC.new(key=khmac.to_bytes((khmac.bit_length() +7)//8, byteorder="big"),msg=msg[1:-32],digestmod=SHA256)
-    if(hmacvalue.digest() != msg[-32:]):
-        Checker(stuID,stuIDB,msgID,"INVALIDHMAC")
+
+def DecryptMessage(kenc, khmac, msg, stuIDB, msgID):
+    msg = intToByte(msg)
+    nonce = msg[:8]
+    hmac = msg[-32:]
+    msg = msg[8:-32]
+    hmacvalue = HMAC.new(
+        key=khmac,
+        msg=msg,
+        digestmod=SHA256,
+    )
+    if hmacvalue.digest() != hmac:
+        Checker(stuID, stuIDB, msgID, "INVALIDHMAC")
     else:
-        counter_obj = Counter.new(
-            128,
-            initial_value=int.from_bytes(dec_material.iv, byteorder='big'),
-            little_endian=False)
-        aes = AES.new(kenc, AES.MODE_CTR, counter=counter_obj.new(128))
-
-        # Encrypt and return IV and ciphertext.
-        ciphertext = aes.encrypt(me)
-
-
-
-
+        aes = AES.new(kenc, AES.MODE_CTR, nonce=nonce)
+        plaintext = aes.decrypt(msg).decode("utf-8")
+        Checker(stuID, stuIDB, msgID, plaintext)
 
 
 if len(sys.argv) < 2:
@@ -250,8 +277,8 @@ if arg == "-h" or arg == "--help":
     with open("readme.txt", "r") as f:
         print(f.read())
 elif arg == "registerIK":
-    Sa = random.randint(1,n-1)
-    data['Sa'] = Sa
+    Sa = random.randint(1, n - 1)
+    data["Sa"] = Sa
     with open("data.json", "w") as json_file:
         json.dump(data, json_file)
     Q = Sa * P
@@ -263,8 +290,8 @@ elif arg == "verifyIK":
     IKRegVerify(code)
 
 elif arg == "registerSPK":
-    Sp = random.randint(1,n-1)
-    data['Sp'] = Sp
+    Sp = random.randint(1, n - 1)
+    data["Sp"] = Sp
     with open("data.json", "w") as json_file:
         json.dump(data, json_file)
     SPKpublic = Sp * P
@@ -286,23 +313,25 @@ elif arg == "registerSPK":
     else:
         print("Server SPK could not be verified")
 elif arg == "resetSPK":
-    h,s = signMessage(stuID)
-    ResetSPK(h,s)
+    h, s = signMessage(stuID)
+    ResetSPK(h, s)
 elif arg == "genHMAC":
-    ServerSPK = Point(data["serverSPKx"], data["serverSPKy"],curve)
+    ServerSPK = Point(data["serverSPKx"], data["serverSPKy"], curve)
     T = Sp * ServerSPK
-    U =   T.x.to_bytes((T.x.bit_length() + 7) // 8, byteorder="big") + T.y.to_bytes((T.y.bit_length() + 7) // 8, byteorder="big") + b'NoNeedToRideAndHide'
+    U = (
+        T.x.to_bytes((T.x.bit_length() + 7) // 8, byteorder="big")
+        + T.y.to_bytes((T.y.bit_length() + 7) // 8, byteorder="big")
+        + b"NoNeedToRideAndHide"
+    )
     K_HMAC = int.from_bytes(SHA3_256.new(U).digest(), byteorder="big")
-    data['K_HMAC'] = K_HMAC
+    data["K_HMAC"] = K_HMAC
     with open("data.json", "w") as json_file:
         json.dump(data, json_file)
 elif arg == "gen0TK":
     for i in range(10):
         generate0TK(i)
 elif arg == "reset0TK":
-    h,s = signMessage(stuID)
+    h, s = signMessage(stuID)
     ResetOTK(h, s)
 else:
     print("usage: py .\phase1 <arg>")
-
-
