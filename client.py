@@ -179,6 +179,7 @@ def generate0TK(index):
     signature = sign0TK(zeroTKpublic)
     OTKReg(index, zeroTKpublic.x, zeroTKpublic.y, signature)
     data["0TK{}".format(index)] = zeroTK
+    data["keyAmount"] += 1
     with open("data.json", "w") as json_file:
         json.dump(data, json_file)
 
@@ -208,6 +209,39 @@ def ReqMsg(h, s):
             res["EK.Y"],
         )
 
+def PseudoSendMsgPH3(h,s):
+    mes = {'ID':stuID, 'H': h, 'S': s}
+    print("Sending message is: ", mes)
+    response = requests.put('{}/{}'.format(API_URL, "PseudoSendMsgPH3"), json = mes)		
+    print(response.json())
+
+    
+def SendMsg(idA, idB, otkid, msgid, msg, ekx, eky):
+    mes = {"IDA":idA, "IDB":idB, "OTKID": int(otkid), "MSGID": msgid, "MSG": msg, "EK.X": ekx, "EK.Y": eky}
+    print("Sending message is: ", mes)
+    response = requests.put('{}/{}'.format(API_URL, "SendMSG"), json = mes)
+    print(response.json())    
+        
+def reqOTKB(stuID, stuIDB, h, s):
+    OTK_request_msg = {'IDA': stuID, 'IDB':stuIDB, 'S': s, 'H': h}
+    print("Requesting party B's OTK ...")
+    response = requests.get('{}/{}'.format(API_URL, "ReqOTK"), json = OTK_request_msg)
+    print(response.json()) 
+    if((response.ok) == True):
+        print(response.json()) 
+        res = response.json()
+        return res['KEYID'], res['OTK.X'], res['OTK.Y']      
+    else:
+        return -1, 0, 0
+
+def Status(stuID, h, s):
+    mes = {'ID':stuID, 'H': h, 'S': s}
+    print("Sending message is: ", mes)
+    response = requests.get('{}/{}'.format(API_URL, "Status"), json = mes)	
+    print(response.json())
+    if (response.ok == True):
+        res = response.json()
+        return res['numMSG'], res['numOTK'], res['StatusMSG']	
 
 # If you decrypted the message, send back the plaintext for grading
 def Checker(stuID, stuIDB, msgID, decmsg):
@@ -243,14 +277,17 @@ def DecryptPseudoMessages():
     Ks = SHA3_256.new(U).digest()
     kdf = Ks
     kenc, khmac, kdf = KDF_chain(kdf)
-    DecryptMessage(kenc, khmac, msg, stuIDB, msgID)
+    plaintext = DecryptMessage(kenc, khmac, msg)
+    Checker(stuID, stuIDB, msgID, plaintext)
     for i in range(4):
         stuIDB, otkID, msgID, msg, EKx, EKy = ReqMsg(h, s)
         kenc, khmac, kdf = KDF_chain(kdf)
-        DecryptMessage(kenc, khmac, msg, stuIDB, msgID)
+        DecryptMessage(kenc, khmac, msg)
+        Checker(stuID, stuIDB, msgID, plaintext)
 
 
-def DecryptMessage(kenc, khmac, msg, stuIDB, msgID):
+
+def DecryptMessage(kenc, khmac, msg):
     msg = intToByte(msg)
     nonce = msg[:8]
     hmac = msg[-32:]
@@ -261,77 +298,136 @@ def DecryptMessage(kenc, khmac, msg, stuIDB, msgID):
         digestmod=SHA256,
     )
     if hmacvalue.digest() != hmac:
-        Checker(stuID, stuIDB, msgID, "INVALIDHMAC")
+        return "INVALIDHMAC"
     else:
         aes = AES.new(kenc, AES.MODE_CTR, nonce=nonce)
         plaintext = aes.decrypt(msg).decode("utf-8")
-        Checker(stuID, stuIDB, msgID, plaintext)
+        return plaintext
+
+def EncrpytMessage(kenc, khmac, msg):
+    cipher = AES.new(kenc, AES.MODE_CTR)
+    nonce = cipher.nonce
+    ctext = nonce + cipher.encrypt(msg)
+    hmac = HMAC.new(
+        key=khmac,
+        msg=msg,
+        digestmod=SHA256,
+    )
+    return nonce + ctext + hmac.digest() 
+
+def SendMessageBlock(stuIDB,messages):
+    h,s = signMessage(stuIDB)
+    id,OTKx,OTKy = reqOTKB(stuID,18007,h,s)
+    zeroTK = random.randint(1, n - 1)
+    zeroTKpublic = zeroTK * P
+    OTK = Point(OTKx,OTKy,curve)
+    T = zeroTK * OTK
+    U = intToByte(T.x) + intToByte(T.y) + b"MadMadWorld"
+    Ks = SHA3_256.new(U).digest()
+    kdf = Ks
+    for i in range(len(messages)):
+        enc,hmac,kdf = KDF_chain(kdf)
+        encmessage = EncrpytMessage(enc,hmac,messages[i].encode("utf-8"))
+        SendMsg(stuID,stuIDB,id,i,byteToInt(encmessage),zeroTKpublic.x,zeroTKpublic.y)
+
+
+
+
+
+def SendPseudoMessages():
+    h,s = signMessage(stuID)
+    PseudoSendMsgPH3(h,s)
+    messages = []
+    stuIDB, otkID, msgID, msg, EKx, EKy = ReqMsg(h, s)
+    # Generation of Ks
+    EKPoint = Point(EKx, EKy, curve)  # EKB.Pub
+    T = data["0TK" + str(otkID)] * EKPoint
+    U = intToByte(T.x) + intToByte(T.y) + b"MadMadWorld"
+    Ks = SHA3_256.new(U).digest()
+    kdf = Ks
+    kenc, khmac, kdf = KDF_chain(kdf)
+    plaintext = DecryptMessage(kenc, khmac, msg)
+    messages.append(plaintext)
+    for i in range(4):
+        stuIDB, otkID, msgID, msg, EKx, EKy = ReqMsg(h, s)
+        kenc, khmac, kdf = KDF_chain(kdf)
+        plaintext = DecryptMessage(kenc, khmac, msg)
+        messages.append(plaintext)
+    
+    SendMessageBlock(18007,messages)
+
+
+
 
 
 if len(sys.argv) < 2:
-    print("usage: py .\phase1 <arg>\nargument: -h|--help       display help")
-    sys.exit(1)
-
-arg = sys.argv[1]
-if arg == "-h" or arg == "--help":
-    with open("readme.txt", "r") as f:
-        print(f.read())
-elif arg == "registerIK":
-    Sa = random.randint(1, n - 1)
-    data["Sa"] = Sa
-    with open("data.json", "w") as json_file:
-        json.dump(data, json_file)
-    Q = Sa * P
-    h, s = signMessage(stuID)
-    IKRegReq(h, s, Q.x, Q.y)
-
-elif arg == "verifyIK":
-    code = int(sys.argv[2])
-    IKRegVerify(code)
-
-elif arg == "registerSPK":
-    Sp = random.randint(1, n - 1)
-    data["Sp"] = Sp
-    with open("data.json", "w") as json_file:
-        json.dump(data, json_file)
-    SPKpublic = Sp * P
-    xBytes = SPKpublic.x.to_bytes((SPKpublic.x.bit_length() + 7) // 8, byteorder="big")
-    yBytes = SPKpublic.y.to_bytes((SPKpublic.y.bit_length() + 7) // 8, byteorder="big")
-    h, s = signMessage(xBytes + yBytes)
-    serverX, serverY, serverH, serverS = SPKReg(h, s, SPKpublic.x, SPKpublic.y)
-    if verifyMessage(
-        serverX.to_bytes((serverX.bit_length() + 7) // 8, byteorder="big")
-        + serverY.to_bytes((serverY.bit_length() + 7) // 8, byteorder="big"),
-        serverS,
-        serverH,
-    ):
-        print("Server SPK verified")
-        data["serverSPKx"] = serverX
-        data["serverSPKy"] = serverY
+    h,s = signMessage(stuID)
+    numMSG,numOTK,stat = Status(stuID,h,s)
+    keyAmount = data["keyAmount"]
+    for i in range(10-numOTK):
+        generate0TK(keyAmount + i)
+    SendPseudoMessages()
+else:
+    arg = sys.argv[1]
+    if arg == "-h" or arg == "--help":
+        with open("readme.txt", "r") as f:
+            print(f.read())
+    elif arg == "registerIK":
+        Sa = random.randint(1, n - 1)
+        data["Sa"] = Sa
         with open("data.json", "w") as json_file:
             json.dump(data, json_file)
+        Q = Sa * P
+        h, s = signMessage(stuID)
+        IKRegReq(h, s, Q.x, Q.y)
+
+    elif arg == "verifyIK":
+        code = int(sys.argv[2])
+        IKRegVerify(code)
+
+    elif arg == "registerSPK":
+        Sp = random.randint(1, n - 1)
+        data["Sp"] = Sp
+        with open("data.json", "w") as json_file:
+            json.dump(data, json_file)
+        SPKpublic = Sp * P
+        xBytes = SPKpublic.x.to_bytes((SPKpublic.x.bit_length() + 7) // 8, byteorder="big")
+        yBytes = SPKpublic.y.to_bytes((SPKpublic.y.bit_length() + 7) // 8, byteorder="big")
+        h, s = signMessage(xBytes + yBytes)
+        serverX, serverY, serverH, serverS = SPKReg(h, s, SPKpublic.x, SPKpublic.y)
+        if verifyMessage(
+            serverX.to_bytes((serverX.bit_length() + 7) // 8, byteorder="big")
+            + serverY.to_bytes((serverY.bit_length() + 7) // 8, byteorder="big"),
+            serverS,
+            serverH,
+        ):
+            print("Server SPK verified")
+            data["serverSPKx"] = serverX
+            data["serverSPKy"] = serverY
+            with open("data.json", "w") as json_file:
+                json.dump(data, json_file)
+        else:
+            print("Server SPK could not be verified")
+    elif arg == "resetSPK":
+        h, s = signMessage(stuID)
+        ResetSPK(h, s)
+    elif arg == "genHMAC":
+        ServerSPK = Point(data["serverSPKx"], data["serverSPKy"], curve)
+        T = Sp * ServerSPK
+        U = (
+            T.x.to_bytes((T.x.bit_length() + 7) // 8, byteorder="big")
+            + T.y.to_bytes((T.y.bit_length() + 7) // 8, byteorder="big")
+            + b"NoNeedToRideAndHide"
+        )
+        K_HMAC = int.from_bytes(SHA3_256.new(U).digest(), byteorder="big")
+        data["K_HMAC"] = K_HMAC
+        with open("data.json", "w") as json_file:
+            json.dump(data, json_file)
+    elif arg == "gen0TK":
+        for i in range(10):
+            generate0TK(i)
+    elif arg == "reset0TK":
+        h, s = signMessage(stuID)
+        ResetOTK(h, s)
     else:
-        print("Server SPK could not be verified")
-elif arg == "resetSPK":
-    h, s = signMessage(stuID)
-    ResetSPK(h, s)
-elif arg == "genHMAC":
-    ServerSPK = Point(data["serverSPKx"], data["serverSPKy"], curve)
-    T = Sp * ServerSPK
-    U = (
-        T.x.to_bytes((T.x.bit_length() + 7) // 8, byteorder="big")
-        + T.y.to_bytes((T.y.bit_length() + 7) // 8, byteorder="big")
-        + b"NoNeedToRideAndHide"
-    )
-    K_HMAC = int.from_bytes(SHA3_256.new(U).digest(), byteorder="big")
-    data["K_HMAC"] = K_HMAC
-    with open("data.json", "w") as json_file:
-        json.dump(data, json_file)
-elif arg == "gen0TK":
-    for i in range(10):
-        generate0TK(i)
-elif arg == "reset0TK":
-    h, s = signMessage(stuID)
-    ResetOTK(h, s)
-else:
-    print("usage: py .\phase1 <arg>")
+        print("usage: py .\phase1 <arg>")
