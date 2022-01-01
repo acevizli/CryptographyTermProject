@@ -319,10 +319,10 @@ def DecryptMessage(kenc, khmac, msg):
 def EncrpytMessage(kenc, khmac, msg):
     cipher = AES.new(kenc, AES.MODE_CTR)
     nonce = cipher.nonce
-    ctext = nonce + cipher.encrypt(msg)
+    ctext = cipher.encrypt(msg)
     hmac = HMAC.new(
         key=khmac,
-        msg=msg,
+        msg=ctext,
         digestmod=SHA256,
     )
     return nonce + ctext + hmac.digest()
@@ -457,7 +457,7 @@ else:
             kdf = Ks
             kenc, khmac, kdf = KDF_chain(kdf)
             plaintext = DecryptMessage(kenc, khmac, msg)
-            print("Student with ID {} sends these messages:")
+            print("Student with ID {} sent these messages:\n".format(stuIDB))
             print(plaintext)
             for i in range(numMSG - 1):
                 stuIDB, otkID, msgID, msg, EKx, EKy = ReqMsg(h, s)
@@ -465,11 +465,11 @@ else:
                 plaintext = DecryptMessage(kenc, khmac, msg)
                 print(plaintext)
     elif arg == "sendMessages":
-        stuIDB = input("Enter StudentID you want to send messages")
+        stuIDB = int(input("Enter StudentID you want to send messages: "))
         messages = []
         message = input("Enter Message: ")
         while message != "":
-            messages.append(message)
+            messages.append(message.encode("utf-8"))
             message = input("Enter Message: ")
         SendMessageBlock(stuIDB, messages)
     else:
