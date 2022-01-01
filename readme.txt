@@ -9,3 +9,5 @@ arguments:
   genHMAC: generates session key with server and stores
   gen0TK: generates 10 one time prekey for client communication and registers it to server
   reset0TK: deletes all one time prekeys in the server
+  getMessages: Gets all messages from server's message box
+  sendMessages: Send meesage block to another student
